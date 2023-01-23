@@ -1,9 +1,31 @@
 import React, { useState, useEffect } from "react";
+import { useSelector } from "react-redux";
+import { selectUser } from "../features/userSlice";
 import { db } from "../firebase";
+import { loadStripe } from "@stripe/stripe-js";
 import "./PlansScreen.css";
 
 function PlansScreen() {
   const [products, setProducts] = useState([]);
+  const user = useSelector(selectUser);
+  const [subscription, setSubscription] = useState(null);
+
+  useEffect(() => {
+    db.collection("customers")
+      .doc(user.uid)
+      .collection("subscriptions")
+      .get()
+      .then((querySnapshot) => {
+        querySnapshot.forEach(async (subscription) => {
+          setSubscription({
+            role: subscription.data().role,
+            current_period_end: subscription.data().current_period_end.seconds,
+            current_period_start:
+              subscription.data().current_period_start.seconds,
+          });
+        });
+      });
+  }, [user.uid]);
 
   useEffect(() => {
     db.collection("products")
@@ -26,21 +48,67 @@ function PlansScreen() {
   }, []);
 
   console.log(products);
+  console.log(subscription);
 
-  const loadCheckout = async (priceId) => {};
+  const loadCheckout = async (priceId) => {
+    const docRef = await db
+      .collection("customers")
+      .doc(user.uid)
+      .collection("checkout_sessions")
+      .add({
+        price: priceId,
+        success_url: window.location.origin,
+        cancel_url: window.location.origin,
+      });
+
+    docRef.onSnapshot(async (snap) => {
+      const { error, sessionId } = snap.data();
+      if (error) {
+        alert(`An error occured: ${error.message}`);
+      }
+      if (sessionId) {
+        const Stripe = await loadStripe(
+          "pk_test_51MRgKiC52VtQ8u3GM9O2K52bWJt5zHKXeUeVY5d38cF465Uhe0uzXZvFnR0ADmTuswcjY0wRaJIOtwxpeBhnki7X007TURnEn5"
+        );
+        Stripe.redirectToCheckout({ sessionId });
+      }
+    });
+  };
 
   return (
     <div className="plansScreen">
+      <br />
+      {subscription && (
+        <p>
+          Renewal date:{" "}
+          {new Date(
+            subscription?.current_period_end * 1000
+          ).toLocaleDateString()}
+        </p>
+      )}
       {Object.entries(products).map(([productId, productData]) => {
         // TODO : Add some logic to check user's subscription is active...
+        const isCurrentPackage = productData.name
+          ?.toLowerCase()
+          .includes(subscription?.role);
+
         return (
-          <div className="plansScreen__plan">
+          <div
+            key={productId}
+            className={`${
+              isCurrentPackage && "plansScreen__plan--disabled"
+            } plansScreen__plan`}
+          >
             <div className="plansScreen__info">
               <h5>{productData.name}</h5>
               <h6>{productData.description}</h6>
             </div>
-            <button onClick={() => loadCheckout(productData.prices.priceId)}>
-              Subscribe
+            <button
+              onClick={() =>
+                !isCurrentPackage && loadCheckout(productData.prices.priceId)
+              }
+            >
+              {isCurrentPackage ? "Current Package" : "Subscribe"}
             </button>
           </div>
         );
